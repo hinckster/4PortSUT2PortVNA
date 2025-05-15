@@ -1,8 +1,11 @@
 import skrf as rf
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 
-# 6 two-port measurements
+# ---------------------------------------------------------------------
+# 1) Absolute paths to the six 2-port Touchstone files
+# ---------------------------------------------------------------------
 paths = {
     'p12': r'C:\Users\Hinckster\Downloads\ProjectVNA\P1P2.s2p',
     'p13': r'C:\Users\Hinckster\Downloads\ProjectVNA\P1P3.s2p',
@@ -12,32 +15,58 @@ paths = {
     'p34': r'C:\Users\Hinckster\Downloads\ProjectVNA\P3P4.s2p',
 }
 
+# ---------------------------------------------------------------------
+# 2) Read each file, tag it with a name, keep the Network objects
+# ---------------------------------------------------------------------
 twoports = []
-for name, p in paths.items():
+for tag, p in paths.items():
     ntw = rf.Network(p)
-    ntw.name = name      # <-- critical!
+    ntw.name = tag             # critical: preserves port order info
     twoports.append(ntw)
 
-# stitch the 2-ports into one 4-port
+# ---------------------------------------------------------------------
+# 3) Stitch into a 4-port Network and save it
+# ---------------------------------------------------------------------
 dut4 = rf.n_twoports_2_nport(twoports, nports=4)
+dut4.name = "4-Port DUT (dict build)"
 
-# convenience
-fGHz = dut4.f/1e9
-S = dut4.s          # shape = (freq, 4, 4)
+out_s4p = os.path.join(os.path.dirname(list(paths.values())[0]),
+                       "hybrid_coupler_from_dict.s4p")
+dut4.write_touchstone(out_s4p)
+print(f"📄  4-port Touchstone saved  →  {out_s4p}")
 
-# required traces
+# ---------------------------------------------------------------------
+# 4) Calculate the four requested traces
+# ---------------------------------------------------------------------
+fGHz     = dut4.f / 1e9                     # x-axis
+S        = dut4.s                           # shape (freq,4,4)
+
 S11_dB   = 20*np.log10(np.abs(S[:,0,0]))
-ratio    = S[:,1,0] / S[:,2,0]
-ratio_dB = 20*np.log10(np.abs(ratio))
-ratio_ph = np.angle(ratio, deg=True)
 S41_dB   = 20*np.log10(np.abs(S[:,3,0]))
 
-# plots
-fig,ax = plt.subplots(2,2, figsize=(10,6))
-ax[0,0].plot(fGHz, S11_dB);             ax[0,0].set_title('dB(S11)')
-ax[0,1].plot(fGHz, S41_dB);             ax[0,1].set_title('dB(S41)')
-ax[1,0].plot(fGHz, ratio_dB);           ax[1,0].set_title('dB(S21/S31)')
-ax[1,1].plot(fGHz, ratio_ph);           ax[1,1].set_title('Phase(S21/S31)')
+ratio    = S[:,1,0] / S[:,2,0]              # S21 / S31
+ratio_dB = 20*np.log10(np.abs(ratio))
+ratio_ph = np.angle(ratio, deg=True)
+
+# ---------------------------------------------------------------------
+# 5) Plot  –  same look you had before
+# ---------------------------------------------------------------------
+fig, ax = plt.subplots(2, 2, figsize=(10, 6))
+
+ax[0,0].plot(fGHz, S11_dB);      ax[0,0].set_title('dB(S11)')
+ax[0,1].plot(fGHz, S41_dB);      ax[0,1].set_title('dB(S41)')
+ax[1,0].plot(fGHz, ratio_dB);    ax[1,0].set_title('dB(S21/S31)')
+ax[1,1].plot(fGHz, ratio_ph);    ax[1,1].set_title('Phase(S21/S31)')
+
 for a in ax.ravel():
-    a.set_xlabel('Frequency (GHz)'); a.grid(True)
-plt.tight_layout(); plt.show()
+    a.set_xlabel('Frequency (GHz)')
+    a.grid(True)
+
+fig.tight_layout()
+
+# optional: write PNG next to the .s4p
+png_path = os.path.join(os.path.dirname(out_s4p), "hybrid_plots.png")
+fig.savefig(png_path, dpi=300)
+print(f"🖼️   Plot panel saved       →  {png_path}")
+
+plt.show()
