@@ -19,7 +19,6 @@ This Python script:
 Files
 -----
 
-quick_plot.py # the script
 P1P2.s2p
 P1P3.s2p
 P1P4.s2p
@@ -27,9 +26,7 @@ P2P3.s2p
 P2P4.s2p
 P3P4.s2p
 
-
 Place everything in the same directory before running.
-
 
 Dependencies
 ------------
@@ -37,11 +34,11 @@ Dependencies
 pip install scikit-rf matplotlib numpy
 
 
-
 Running
 -------
 
-python quick_plot.py
+Change the name based on your file name:
+python SCRIPTNAME.py
 
 
 A 2 × 2 plot panel appears.  
