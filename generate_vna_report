@@ -49,7 +49,7 @@ ratio_dB = 20*np.log10(np.abs(ratio))
 ratio_ph = np.angle(ratio, deg=True)
 
 # ---------------------------------------------------------------------
-# 5) Plot  –  same look you had before
+# 5) Plot
 # ---------------------------------------------------------------------
 fig, ax = plt.subplots(2, 2, figsize=(10, 6))
 
