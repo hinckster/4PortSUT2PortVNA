@@ -1,127 +1,43 @@
-#!/usr/bin/env python3
-"""
-generate_vna_report.py
-Create a multi-page PDF report for a 4-port DUT measured with a 2-port VNA.
-Put the six 2-port files (P1P2…P3P4) in one folder, then run:
-
-    python generate_vna_report.py --dir <folder> --out my_dut_report.pdf
-"""
-import os, argparse, datetime, re, textwrap
+import skrf as rf
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-import skrf as rf
 
-# ── 1. Find & load any files named P#P#*.s2p ───────────────────────
-PAIR_RE = re.compile(r"P(\d)P(\d).*\.s2p$", re.I)
+# 6 two-port measurements
+paths = {
+    'p12': r'C:\Users\Hinckster\Downloads\ProjectVNA\P1P2.s2p',
+    'p13': r'C:\Users\Hinckster\Downloads\ProjectVNA\P1P3.s2p',
+    'p14': r'C:\Users\Hinckster\Downloads\ProjectVNA\P1P4.s2p',
+    'p23': r'C:\Users\Hinckster\Downloads\ProjectVNA\P2P3.s2p',
+    'p24': r'C:\Users\Hinckster\Downloads\ProjectVNA\P2P4.s2p',
+    'p34': r'C:\Users\Hinckster\Downloads\ProjectVNA\P3P4.s2p',
+}
 
-def find_pairs(basedir):
-    nets, maps = [], []
-    for fn in os.listdir(basedir):
-        m = PAIR_RE.match(fn)
-        if m:
-            pa, pb = int(m.group(1))-1, int(m.group(2))-1
-            nets.append(rf.Network(os.path.join(basedir, fn)))
-            maps.append((pa, pb))
-    if len(nets) < 3:
-        raise FileNotFoundError("Need ≥3 S2P files to build a 4-port matrix")
-    return nets, maps
+twoports = []
+for name, p in paths.items():
+    ntw = rf.Network(p)
+    ntw.name = name      # <-- critical!
+    twoports.append(ntw)
 
-def assemble_network(nets, maps):
-    nports = max(max(p) for p in maps) + 1
-    return rf.n_twoports_2_nport(nets, nports=nports, port_map_list=maps)
+# stitch the 2-ports into one 4-port
+dut4 = rf.n_twoports_2_nport(twoports, nports=4)
 
-# ── 2. plotting helpers ───────────────────────────────────────────
-def plot_mag(fig, net, pairs, title):
-    ax = fig.add_subplot(111)
-    for m, n in pairs:
-        net.plot_s_db(m=m, n=n, ax=ax, label=f"S{m+1}{n+1}")
-    ax.set_title(title); ax.legend(); ax.grid(True, which="both")
+# convenience
+fGHz = dut4.f/1e9
+S = dut4.s          # shape = (freq, 4, 4)
 
-def get_group_delay(net, m, n):
-    """Works with scikit-rf ≥0.30 (property) and older (method)."""
-    gd_attr = net.group_delay
-    if callable(gd_attr):                # old method
-        return gd_attr(m=m, n=n)
-    else:                                # new ndarray property
-        return gd_attr[:, m, n]
+# required traces
+S11_dB   = 20*np.log10(np.abs(S[:,0,0]))
+ratio    = S[:,1,0] / S[:,2,0]
+ratio_dB = 20*np.log10(np.abs(ratio))
+ratio_ph = np.angle(ratio, deg=True)
+S41_dB   = 20*np.log10(np.abs(S[:,3,0]))
 
-# ── 3. build PDF report ───────────────────────────────────────────
-def make_report(net, outfile, title="DUT 4-Port S-Parameter Report"):
-    with PdfPages(outfile) as pdf:
-        # cover page ------------------------------------------------
-        fig = plt.figure(figsize=(8.27, 11.69))
-        txt = textwrap.dedent(f"""
-            {title}
-
-            Generated: {datetime.datetime.now():%Y-%m-%d  %H:%M}
-
-            Frequency points : {len(net.f)}
-            Start / Stop     : {net.f[0]/1e6:.1f} MHz  –  {net.f[-1]/1e6:.1f} MHz
-            Characteristic Z₀: {net.z0[0][0]} Ω
-        """)
-        fig.text(0.1, 0.7, txt, fontsize=12)
-        pdf.savefig(fig); plt.close(fig)
-
-        # return loss ----------------------------------------------
-        fig = plt.figure();  plot_mag(fig, net,
-            [(i, i) for i in range(net.nports)], "Return Loss  |Sii|  (dB)")
-        pdf.savefig(fig); plt.close(fig)
-
-        # insertion loss -------------------------------------------
-        fig = plt.figure();  plot_mag(fig, net,
-            [(0,1),(1,0),(2,3),(3,2)],
-            "Insertion / Transmission  (selected Sij)")
-        pdf.savefig(fig); plt.close(fig)
-
-        # isolation ------------------------------------------------
-        fig = plt.figure();  plot_mag(fig, net,
-            [(0,3),(1,2)], "Isolation examples")
-        pdf.savefig(fig); plt.close(fig)
-
-        # group delay ---------------------------------------------
-        fig = plt.figure()
-        ax  = fig.add_subplot(111)
-        for m,n in [(0,1),(1,0)]:
-            gd = get_group_delay(net, m, n)
-            ax.plot(net.f/1e9, gd, label=f"GD S{m+1}{n+1}")
-        ax.set_xlabel("Frequency (GHz)")
-        ax.set_ylabel("Group delay (s)")
-        ax.set_title("Group Delay"); ax.legend(); ax.grid(True, which="both")
-        pdf.savefig(fig); plt.close(fig)
-
-        # ADS-style 2×2 figure ------------------------------------
-        fGHz = net.f / 1e9
-        S21, S31 = net.s[:,1,0], net.s[:,2,0]
-        mag21, mag31 = 20*np.log10(np.abs(S21)), 20*np.log10(np.abs(S31))
-        phase_diff = np.rad2deg(np.unwrap(np.angle(S21)) - np.unwrap(np.angle(S31)))
-        mag_diff   = mag21 - mag31
-
-        fig, ax = plt.subplots(2,2, figsize=(8,6))
-        fig.suptitle("ADS-style comparative plots (Ports 1-2-3)")
-        ax[0,0].plot(fGHz, mag21);       ax[0,0].set_ylabel("|S21|  (dB)")
-        ax[0,1].plot(fGHz, mag31);       ax[0,1].set_ylabel("|S31|  (dB)")
-        ax[1,0].plot(fGHz, phase_diff);  ax[1,0].set_ylabel("∠S21 – ∠S31  (deg)")
-        ax[1,1].plot(fGHz, mag_diff);    ax[1,1].set_ylabel("|S21| – |S31|  (dB)")
-        for a in ax.ravel(): a.set_xlabel("Frequency (GHz)"); a.grid(True, which="both")
-        fig.tight_layout(); pdf.savefig(fig); plt.close(fig)
-
-        pdf.infodict().update(
-            Title=title,
-            CreationDate=datetime.datetime.now()
-        )
-
-# ── 4. CLI entry-point ────────────────────────────────────────────
-def main():
-    ap = argparse.ArgumentParser(description="Generate PDF report from P#P#.s2p files")
-    ap.add_argument("--dir", default=".", help="directory containing S2P files")
-    ap.add_argument("--out", default="report.pdf", help="output PDF filename")
-    args = ap.parse_args()
-
-    nets, maps = find_pairs(args.dir)
-    net4       = assemble_network(nets, maps)
-    make_report(net4, args.out)
-    print(f"Report saved → {args.out}")
-
-if __name__ == "__main__":
-    main()
+# plots
+fig,ax = plt.subplots(2,2, figsize=(10,6))
+ax[0,0].plot(fGHz, S11_dB);             ax[0,0].set_title('dB(S11)')
+ax[0,1].plot(fGHz, S41_dB);             ax[0,1].set_title('dB(S41)')
+ax[1,0].plot(fGHz, ratio_dB);           ax[1,0].set_title('dB(S21/S31)')
+ax[1,1].plot(fGHz, ratio_ph);           ax[1,1].set_title('Phase(S21/S31)')
+for a in ax.ravel():
+    a.set_xlabel('Frequency (GHz)'); a.grid(True)
+plt.tight_layout(); plt.show()
